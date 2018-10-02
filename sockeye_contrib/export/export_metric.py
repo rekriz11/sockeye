@@ -24,7 +24,7 @@ def main():
     params.add_argument("--metric", "-m", default=C.PERPLEXITY, choices=[C.ACCURACY, C.PERPLEXITY],
                         help="Name of metric to export. Default: %(default)s.")
     params.add_argument("--output", "-o", required=True,
-                        help="Output file (`metric.json' or similar)")
+                        help="Output file (`metric.json' or similar).")
     args = params.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
