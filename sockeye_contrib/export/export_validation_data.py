@@ -39,12 +39,16 @@ def main():
     # No bucketing is equivalent to bucket 0 containing everything.
     data = {C.SOURCE_NAME: dataset.source[0], C.TARGET_NAME: dataset.target[0]}
     data_fname = args.output + DATA_SUFFIX
-    logging.info("Writing data dict (%s, %s) to `%s'." % (C.SOURCE_NAME, C.TARGET_NAME, data_fname))
+    logging.info("Writing data dict (%s %s, %s %s) to `%s'." % (C.SOURCE_NAME,
+                                                                dataset.source[0].shape,
+                                                                C.TARGET_NAME,
+                                                                dataset.target[0].shape,
+                                                                data_fname))
     mx.nd.save(data_fname, data)
 
     label = {C.TARGET_LABEL_NAME: dataset.label[0]}
     label_dict = args.output + LABEL_SUFFIX
-    logging.info("Writing label dict (%s) to `%s'." % (C.TARGET_LABEL_NAME, label_dict))
+    logging.info("Writing label dict (%s %s) to `%s'." % (C.TARGET_LABEL_NAME, dataset.label[0].shape, label_dict))
     mx.nd.save(label_dict, label)
 
 
