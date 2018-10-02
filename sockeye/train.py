@@ -11,21 +11,13 @@
 # express or implied. See the License for the specific language governing
 # permissions and limitations under the License.
 
-import multiprocessing as mp
-import os
-import time
-print("PID: ", os.getpid())
-
-
-def dummy_function_to_start_semaphore_tracker():
-    print('Semphore tracker and forkserver started.')
+from multiprocessing import forkserver
+from multiprocessing import semaphore_tracker
 
 
 if __name__ == "__main__":
-    mp.set_start_method("forkserver")
-    p = mp.Process(target=dummy_function_to_start_semaphore_tracker)
-    p.start()
-    p.join()
+    semaphore_tracker.ensure_running()
+    forkserver.ensure_running()
 
 
 """
