@@ -880,8 +880,17 @@ class Translation:
         self.nbest_translations = nbest_translations
 
 
-def empty_translation() -> Translation:
-    return Translation(target_ids=[], attention_matrix=np.asarray([[0]]), score=-np.inf)
+def empty_translation(add_nbest: bool = False) -> Translation:
+    """
+    Return an empty translation.
+
+    :param add_nbest: Include (empty) nbest_translations in the translation object.
+    """
+    return Translation(target_ids=[],
+                       attention_matrix=np.asarray([[0]]),
+                       score=-np.inf,
+                       nbest_translations=NBestTranslations([], [], []) if add_nbest else None
+                       )
 
 
 IndexedTranslatorInput = NamedTuple('IndexedTranslatorInput', [
@@ -1279,11 +1288,11 @@ class Translator:
             # bad input
             if isinstance(trans_input, BadTranslatorInput):
                 translated_chunks.append(IndexedTranslation(input_idx=trans_input_idx, chunk_idx=0,
-                                                            translation=empty_translation()))
+                                                            translation=empty_translation(add_nbest=(self.nbest_size > 1))))
             # empty input
             elif len(trans_input.tokens) == 0:
                 translated_chunks.append(IndexedTranslation(input_idx=trans_input_idx, chunk_idx=0,
-                                                            translation=empty_translation()))
+                                                            translation=empty_translation(add_nbest=(self.nbest_size > 1))))
             else:
                 # TODO(tdomhan): Remove branch without EOS with next major version bump, as future models will always be trained with source side EOS symbols
                 if self.source_with_eos:
@@ -1430,8 +1439,8 @@ class Translator:
         :return: TranslatorOutput.
         """
         target_ids = translation.target_ids
-        target_tokens = utils.ids_to_tokens(translation.target_ids, self.vocab_target_inv)
-        target_string = utils.tokens_to_string(target_ids, target_tokens, self.strip_ids)
+        target_tokens = [self.vocab_target_inv[target_id] for target_id in target_ids]
+        target_string = C.TOKEN_SEPARATOR.join(data_io.ids2tokens(target_ids, self.vocab_target_inv, self.strip_ids))
 
         attention_matrix = translation.attention_matrix
         attention_matrix = attention_matrix[:, :len(trans_input.tokens)]
