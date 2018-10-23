@@ -1052,7 +1052,7 @@ def add_training_args(params):
     train_params.add_argument('--seed',
                               type=int,
                               default=13,
-                              help='Random seed. Default: %(default)s.'
+                              help='Random seed. Default: %(default)s.')
 
     train_params.add_argument('--use-mrt',
                               default=False,

@@ -25,7 +25,7 @@ import mxnet as mx
 from sockeye.config import Config
 from sockeye.layers import LayerNormalization
 from sockeye.utils import check_condition
-from . import attention as attentions
+#from . import rnn_attention as attentions
 from . import constants as C
 from . import convolution
 from . import encoder
@@ -529,7 +529,7 @@ class RecurrentDecoderConfig(Config):
         self.dtype = dtype
 
 def get_recurrent_decoder(config: RecurrentDecoderConfig,
-                          attention: attentions.Attention,
+                          attention: rnn_attention.Attention,
                           lexicon: Optional[lexicons.Lexicon] = None,
                           embed_weight: Optional[mx.sym.Symbol] = None) -> 'Decoder':
     """
@@ -542,7 +542,7 @@ def get_recurrent_decoder(config: RecurrentDecoderConfig,
     :return: Decoder instance.
     """
     return RecurrentDecoder(config,
-                            attention=attention,
+                            attention=rnn_attention,
                             lexicon=lexicon,
                             prefix=C.DECODER_PREFIX,
                             embed_weight=embed_weight)
@@ -1436,11 +1436,11 @@ class RecurrentDecoder(Decoder):
                 word_id_prev: mx.sym.Symbol,
                 state_prev: RecurrentDecoderState,
                 attention_func: Callable,
-                attention_state_prev: attentions.AttentionState,
+                attention_state_prev: rnn_attention.AttentionState,
                 source_lexicon: Optional[mx.sym.Symbol] = None,
                 softmax_temperature: Optional[float] = None) -> Tuple[mx.sym.Symbol,
                                                                       RecurrentDecoderState,
-                                                                      attentions.AttentionState]:
+                                                                      rnn_attention.AttentionState]:
         """
         Given previous word id, attention function, previous hidden state and RNN layer states,
         returns Softmax predictions (not a loss symbol), next hidden state, and next layer
