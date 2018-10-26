@@ -699,6 +699,16 @@ def create_training_model(config: model.ModelConfig,
                                             gradient_compression_params=gradient_compression_params(args),
                                             fixed_param_names=args.fixed_param_names)
 
+    if args.use_mrt:
+        training_model = training.MRTrainingModel(config=config,
+                                                  context=context,
+                                                  train_iter=train_iter,
+                                                  fused=args.use_fused_rnn,
+                                                  bucketing=not args.no_bucketing,
+                                                  lr_scheduler=lr_scheduler_instance,
+                                                  state_names=['is_sample'],
+                                                  grad_req='add')
+
     return training_model
 
 
