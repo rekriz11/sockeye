@@ -21,10 +21,15 @@ BOS_SYMBOL = "<s>"
 EOS_SYMBOL = "</s>"
 UNK_SYMBOL = "<unk>"
 PAD_SYMBOL = "<pad>"
-PAD_ID = 0
+#PAD_ID = 0
 PAD_FORMAT = "<pad%d>"
 TOKEN_SEPARATOR = " "
 VOCAB_SYMBOLS = [PAD_SYMBOL, UNK_SYMBOL, BOS_SYMBOL, EOS_SYMBOL]
+
+PAD_ID = VOCAB_SYMBOLS.index(PAD_SYMBOL)
+BOS_ID = VOCAB_SYMBOLS.index(BOS_SYMBOL)
+EOS_ID = VOCAB_SYMBOLS.index(EOS_SYMBOL)
+
 # reserve extra space for the EOS or BOS symbol that is added to both source and target
 SPACE_FOR_XOS = 1
 
@@ -340,6 +345,7 @@ OUTPUT_HANDLERS_SCORING = [OUTPUT_HANDLER_SCORE,
 ACCURACY = 'accuracy'
 PERPLEXITY = 'perplexity'
 BLEU = 'bleu'
+sBLEU = 'sentence_bleu'
 CHRF = 'chrf'
 ROUGE = 'rouge'
 ROUGE1 = 'rouge1'

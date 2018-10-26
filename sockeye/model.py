@@ -52,6 +52,7 @@ class ModelConfig(Config):
 
     def __init__(self,
                  config_data: data_io.DataConfig,
+                 max_seq_len: int,
                  vocab_source_size: int,
                  vocab_target_size: int,
                  config_embed_source: encoder.EmbeddingConfig,
@@ -59,12 +60,15 @@ class ModelConfig(Config):
                  config_encoder: encoder.EncoderConfig,
                  config_decoder: decoder.DecoderConfig,
                  config_loss: loss.LossConfig,
+                 lexical_bias: bool = False,
+                 learn_lexical_bias: bool = False,
                  weight_tying: bool = False,
                  weight_tying_type: Optional[str] = C.WEIGHT_TYING_TRG_SOFTMAX,
                  weight_normalization: bool = False,
                  lhuc: bool = False) -> None:
         super().__init__()
         self.config_data = config_data
+        self.max_seq_len = max_seq_len
         self.vocab_source_size = vocab_source_size
         self.vocab_target_size = vocab_target_size
         self.config_embed_source = config_embed_source
@@ -72,6 +76,8 @@ class ModelConfig(Config):
         self.config_encoder = config_encoder
         self.config_decoder = config_decoder
         self.config_loss = config_loss
+        self.lexical_bias = lexical_bias
+        self.learn_lexical_bias = learn_lexical_bias
         self.weight_tying = weight_tying
         self.weight_tying_type = weight_tying_type
         self.weight_normalization = weight_normalization

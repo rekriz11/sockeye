@@ -459,6 +459,8 @@ class RecurrentDecoderConfig(Config):
     """
 
     def __init__(self,
+                 vocab_size: int,
+                 num_embed: int,
                  max_seq_len_source: int,
                  rnn_config: rnn.RNNConfig,
                  attention_config: rnn_attention.AttentionConfig,
@@ -469,9 +471,19 @@ class RecurrentDecoderConfig(Config):
                  layer_normalization: bool = False,
                  attention_in_upper_layers: bool = False,
                  dtype: str = C.DTYPE_FP32,
-                 enc_last_hidden_concat_to_embedding: bool = False) -> None:
+                 enc_last_hidden_concat_to_embedding: bool = False,
+                 scheduled_sampling_type: Optional[str] = None,
+                 scheduled_sampling_decay_params: Optional[List[float]] = None,
+                 use_mrt: bool = False,
+                 mrt_num_samples: int = 0,
+                 mrt_sup_grad_scale: float = 1.0,
+                 mrt_entropy_reg: float = 0.0,
+                 mrt_max_target_len_ratio: float = 1.0,
+                 mrt_metric: str = C.BLEU) -> None:
 
         super().__init__()
+        self.vocab_size = vocab_size
+        self.num_embed = num_embed
         self.max_seq_len_source = max_seq_len_source
         self.rnn_config = rnn_config
         self.attention_config = attention_config
@@ -482,6 +494,14 @@ class RecurrentDecoderConfig(Config):
         self.layer_normalization = layer_normalization
         self.attention_in_upper_layers = attention_in_upper_layers
         self.enc_last_hidden_concat_to_embedding = enc_last_hidden_concat_to_embedding
+        self.scheduled_sampling_type = scheduled_sampling_type
+        self.scheduled_sampling_decay_params = scheduled_sampling_decay_params
+        self.use_mrt = use_mrt
+        self.mrt_num_samples = mrt_num_samples
+        self.mrt_sup_grad_scale = mrt_sup_grad_scale
+        self.mrt_entropy_reg = mrt_entropy_reg
+        self.mrt_max_target_len_ratio = mrt_max_target_len_ratio
+        self.mrt_metric = mrt_metric
         self.dtype = dtype
 
 

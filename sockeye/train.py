@@ -108,6 +108,15 @@ def check_arg_compatibility(args: argparse.Namespace):
         check_condition(args.decoder != C.TRANSFORMER_TYPE and args.decoder != C.CONVOLUTION_TYPE,
                         "Decoder pre-training currently supports RNN decoders only.")
 
+    if args.use_fused_rnn:
+        check_condition(not args.use_cpu, "GPU required for FusedRNN cells")
+
+    if args.rnn_residual_connections:
+        check_condition(args.rnn_num_layers > 2, "Residual connections require at least 3 RNN layers")
+
+    check_condition(args.optimized_metric == C.BLEU or args.optimized_metric in args.metrics,
+                    "Must optimize either BLEU or one of tracked metrics (--metrics)")
+
 
 def check_resume(args: argparse.Namespace, output_folder: str) -> bool:
     """
@@ -446,7 +455,7 @@ def create_encoder_config(args: argparse.Namespace,
 
 
 def create_decoder_config(args: argparse.Namespace, encoder_num_hidden: int,
-                          max_seq_len_source: int, max_seq_len_target: int) -> decoder.DecoderConfig:
+                          max_seq_len_source: int, max_seq_len_target: int, target_vocab_size: int, num_embed_target: int) -> decoder.DecoderConfig:
     """
     Create the config for the decoder.
 
@@ -530,6 +539,8 @@ def create_decoder_config(args: argparse.Namespace, encoder_num_hidden: int,
         _, decoder_rnn_dropout_recurrent = args.rnn_dropout_recurrent
 
         config_decoder = decoder.RecurrentDecoderConfig(
+            vocab_size=target_vocab_size,
+            num_embed=num_embed_target,
             max_seq_len_source=max_seq_len_source,
             rnn_config=rnn.RNNConfig(cell_type=args.rnn_cell_type,
                                      num_hidden=args.rnn_num_hidden,
@@ -548,7 +559,15 @@ def create_decoder_config(args: argparse.Namespace, encoder_num_hidden: int,
             layer_normalization=args.layer_normalization,
             attention_in_upper_layers=args.rnn_attention_in_upper_layers,
             state_init_lhuc=args.lhuc is not None and (C.LHUC_STATE_INIT in args.lhuc or C.LHUC_ALL in args.lhuc),
-            enc_last_hidden_concat_to_embedding=args.rnn_enc_last_hidden_concat_to_embedding)
+            enc_last_hidden_concat_to_embedding=args.rnn_enc_last_hidden_concat_to_embedding,
+            scheduled_sampling_type=args.scheduled_sampling_type,
+            scheduled_sampling_decay_params=args.scheduled_sampling_decay_params,
+            use_mrt=args.use_mrt,
+            mrt_num_samples=args.mrt_num_samples,
+            mrt_sup_grad_scale=args.mrt_sup_grad_scale,
+            mrt_entropy_reg=args.mrt_entropy_reg,
+            mrt_max_target_len_ratio=args.mrt_max_target_len_ratio,
+            mrt_metric=args.mrt_metric)
 
     return config_decoder
 
@@ -616,7 +635,7 @@ def create_model_config(args: argparse.Namespace,
 
     config_encoder, encoder_num_hidden = create_encoder_config(args, max_seq_len_source, max_seq_len_target,
                                                                config_conv)
-    config_decoder = create_decoder_config(args, encoder_num_hidden, max_seq_len_source, max_seq_len_target)
+    config_decoder = create_decoder_config(args, encoder_num_hidden, max_seq_len_source, max_seq_len_target, target_vocab_size, num_embed_target)
 
     source_factor_configs = None
     if len(source_vocab_sizes) > 1:
@@ -638,6 +657,7 @@ def create_model_config(args: argparse.Namespace,
                                   label_smoothing=args.label_smoothing)
 
     model_config = model.ModelConfig(config_data=config_data,
+                                     max_seq_len=max_seq_len_source,
                                      vocab_source_size=source_vocab_size,
                                      vocab_target_size=target_vocab_size,
                                      config_embed_source=config_embed_source,
@@ -645,6 +665,8 @@ def create_model_config(args: argparse.Namespace,
                                      config_encoder=config_encoder,
                                      config_decoder=config_decoder,
                                      config_loss=config_loss,
+                                     lexical_bias=args.lexical_bias,
+                                     learn_lexical_bias=args.learn_lexical_bias,
                                      weight_tying=args.weight_tying,
                                      weight_tying_type=args.weight_tying_type if args.weight_tying else None,
                                      weight_normalization=args.weight_normalization,
@@ -830,6 +852,7 @@ def train(args: argparse.Namespace):
                                            config_data=config_data)
         model_config.freeze()
 
+        '''START HERE'''
         training_model = create_training_model(config=model_config,
                                                context=context,
                                                output_dir=output_folder,
