@@ -454,8 +454,55 @@ def create_encoder_config(args: argparse.Namespace,
     return config_encoder, encoder_num_hidden
 
 
+def create_decoder_config_mrt(args: argparse.Namespace, target_vocab_size: int) -> decoder.DecoderConfig:
+    """
+    Create the config for the decoder.
+
+    :param args: Arguments as returned by argparse.
+    :param encoder_num_hidden: Number of hidden units of the Encoder.
+    :param max_seq_len_source: Maximum source sequence length.
+    :param max_seq_len_target: Maximum target sequence length.
+    :return: The config for the decoder.
+    """
+    decoder_weight_tying = args.weight_tying and C.WEIGHT_TYING_TRG in args.weight_tying_type \
+                           and C.WEIGHT_TYING_SOFTMAX in args.weight_tying_type
+
+    _, decoder_num_layers = args.num_layers
+    _, num_embed_target = args.num_embed
+    _, decoder_rnn_dropout_inputs = args.rnn_dropout_inputs
+    _, decoder_rnn_dropout_states = args.rnn_dropout_states
+    _, decoder_rnn_dropout_recurrent = args.rnn_dropout_recurrent
+
+    config_rnn = rnn.RNNConfig(cell_type=args.rnn_cell_type,
+                               num_hidden=args.rnn_num_hidden,
+                               num_layers=decoder_num_layers,
+                               dropout_inputs=decoder_rnn_dropout_inputs,
+                               dropout_states=decoder_rnn_dropout_states,
+                               dropout_recurrent=decoder_rnn_dropout_recurrent,
+                               residual=args.rnn_residual_connections,
+                               first_residual_layer=args.rnn_first_residual_layer,
+                               forget_bias=args.rnn_forget_bias,
+                               lhuc=args.lhuc is not None and (C.LHUC_DECODER in args.lhuc or C.LHUC_ALL in args.lhuc))
+
+    config_decoder = decoder.RecurrentDecoderConfig(vocab_size=target_vocab_size,
+                                                    num_embed=num_embed_target,
+                                                    rnn_config=config_rnn,
+                                                    dropout=decoder_rnn_dropout_recurrent,
+                                                    weight_tying=decoder_weight_tying,
+                                                    context_gating=args.rnn_context_gating,
+                                                    layer_normalization=args.layer_normalization,
+                                                    scheduled_sampling_type=args.scheduled_sampling_type,
+                                                    scheduled_sampling_decay_params=args.scheduled_sampling_decay_params,
+                                                    use_mrt=args.use_mrt,
+                                                    mrt_num_samples=args.mrt_num_samples,
+                                                    mrt_sup_grad_scale=args.mrt_sup_grad_scale,
+                                                    mrt_entropy_reg=args.mrt_entropy_reg,
+                                                    mrt_max_target_len_ratio=args.mrt_max_target_len_ratio,
+                                                    mrt_metric=args.mrt_metric)
+    return config_decoder
+
 def create_decoder_config(args: argparse.Namespace, encoder_num_hidden: int,
-                          max_seq_len_source: int, max_seq_len_target: int) -> decoder.DecoderConfig:
+                          max_seq_len_source: int, max_seq_len_target: int, target_vocab_size: int) -> decoder.DecoderConfig:
     """
     Create the config for the decoder.
 
@@ -539,6 +586,8 @@ def create_decoder_config(args: argparse.Namespace, encoder_num_hidden: int,
         _, decoder_rnn_dropout_recurrent = args.rnn_dropout_recurrent
 
         config_decoder = decoder.RecurrentDecoderConfig(
+            vocab_size=target_vocab_size,
+            num_embed=num_embed_target,
             max_seq_len_source=max_seq_len_source,
             rnn_config=rnn.RNNConfig(cell_type=args.rnn_cell_type,
                                      num_hidden=args.rnn_num_hidden,
@@ -557,7 +606,15 @@ def create_decoder_config(args: argparse.Namespace, encoder_num_hidden: int,
             layer_normalization=args.layer_normalization,
             attention_in_upper_layers=args.rnn_attention_in_upper_layers,
             state_init_lhuc=args.lhuc is not None and (C.LHUC_STATE_INIT in args.lhuc or C.LHUC_ALL in args.lhuc),
-            enc_last_hidden_concat_to_embedding=args.rnn_enc_last_hidden_concat_to_embedding)
+            enc_last_hidden_concat_to_embedding=args.rnn_enc_last_hidden_concat_to_embedding,
+            scheduled_sampling_type=args.scheduled_sampling_type,
+            scheduled_sampling_decay_params=args.scheduled_sampling_decay_params,
+            use_mrt=args.use_mrt,
+            mrt_num_samples=args.mrt_num_samples,
+            mrt_sup_grad_scale=args.mrt_sup_grad_scale,
+            mrt_entropy_reg=args.mrt_entropy_reg,
+            mrt_max_target_len_ratio=args.mrt_max_target_len_ratio,
+            mrt_metric=args.mrt_metric)
 
     return config_decoder
 
@@ -582,6 +639,48 @@ def check_encoder_decoder_args(args) -> None:
         check_condition(args.rnn_cell_type == C.LSTM_TYPE,
                         "Recurrent dropout without memory loss only supported for LSTMs right now.")
 
+
+def create_model_config_mrt(args: argparse.Namespace,
+                        source_vocab_sizes: List[int],
+                        target_vocab_size: int,
+                        max_seq_len_source: int,
+                        max_seq_len_target: int,
+                        config_data: data_io.DataConfig) -> model.ModelConfig:
+    """
+    Create a ModelConfig from the argument given in the command line.
+
+    :param args: Arguments as returned by argparse.
+    :param source_vocab_sizes: The size of the source vocabulary (and source factors).
+    :param target_vocab_size: The size of the target vocabulary.
+    :param max_seq_len_source: Maximum source sequence length.
+    :param max_seq_len_target: Maximum target sequence length.
+    :param config_data: Data config.
+    :return: The model configuration.
+    """
+    num_embed_source, num_embed_target = args.num_embed
+    embed_dropout_source, embed_dropout_target = args.embed_dropout
+    source_vocab_size, *source_factor_vocab_sizes = source_vocab_sizes
+
+    check_encoder_decoder_args(args)
+
+    config_conv = None
+    if args.encoder == C.RNN_WITH_CONV_EMBED_NAME:
+        config_conv = encoder.ConvolutionalEmbeddingConfig(num_embed=num_embed_source,
+                                                           max_filter_width=args.conv_embed_max_filter_width,
+                                                           num_filters=args.conv_embed_num_filters,
+                                                           pool_stride=args.conv_embed_pool_stride,
+                                                           num_highway_layers=args.conv_embed_num_highway_layers,
+                                                           dropout=args.conv_embed_dropout)
+
+    #encoder config
+    config_encoder, encoder_num_hidden = create_encoder_config(args, max_seq_len_source, max_seq_len_target,
+                                                               config_conv)
+
+    #decoder config
+    config_decoder = create_decoder_config_mrt(args, target_vocab_size)
+
+    print("endoder: {}".format(config_encoder))
+    print("decoder: {}".format(config_decoder))
 
 def create_model_config(args: argparse.Namespace,
                         source_vocab_sizes: List[int],
@@ -764,6 +863,15 @@ def create_optimizer_config(args: argparse.Namespace, source_vocab_sizes: List[i
     logger.info("Gradient Compression: %s", gradient_compression_params(args))
     return config
 
+def get_lr_scheduler(args: argparse.Namespace):
+    lr_sched = lr_scheduler.get_lr_scheduler(args.learning_rate_scheduler_type,
+                                             args.checkpoint_frequency,
+                                             none_if_negative(args.learning_rate_half_life),
+                                             args.learning_rate_reduce_factor,
+                                             args.learning_rate_reduce_num_not_improved,
+                                             args.learning_rate_schedule,
+                                             args.learning_rate_warmup)
+    return lr_sched
 
 def main():
     params = arguments.ConfigArgumentParser(description='Train Sockeye sequence-to-sequence models.')
@@ -788,6 +896,8 @@ def train_mrt(args: argparse.Namespace):
 
     check_arg_compatibility(args)
     output_folder = os.path.abspath(args.output)
+    resume_training = check_resume(args, output_folder)
+    resume_training = False
 
     global logger
     logger = setup_main_logger(__name__,
@@ -796,7 +906,66 @@ def train_mrt(args: argparse.Namespace):
     utils.log_basic_info(args)
     arguments.save_args(args, os.path.join(output_folder, C.ARGS_STATE_NAME))
 
+    max_seq_len_source, max_seq_len_target = args.max_seq_len
+    # The maximum length is the length before we add the BOS/EOS symbols
+    max_seq_len_source = max_seq_len_source + C.SPACE_FOR_XOS
+    max_seq_len_target = max_seq_len_target + C.SPACE_FOR_XOS
+    logger.info("Adjusting maximum length to reserve space for a BOS/EOS marker. New maximum length: (%d, %d)",
+                max_seq_len_source, max_seq_len_target)
 
+    with ExitStack() as exit_stack:
+        #laod context
+        context = utils.determine_context(device_ids=args.device_ids,
+                                          use_cpu=args.use_cpu,
+                                          disable_device_locking=args.disable_device_locking,
+                                          lock_dir=args.lock_dir,
+                                          exit_stack=exit_stack)
+
+        if args.batch_type == C.BATCH_TYPE_SENTENCE:
+            check_condition(args.batch_size % len(context) == 0, "When using multiple devices the batch size must be "
+                                                                 "divisible by the number of devices. Choose a batch "
+                                                                 "size that is a multiple of %d." % len(context))
+        logger.info("Training Device(s): %s", ", ".join(str(c) for c in context))
+
+        train_iter, eval_iter, config_data, source_vocabs, target_vocab = create_data_iters_and_vocabs(
+            args=args,
+            max_seq_len_source=max_seq_len_source,
+            max_seq_len_target=max_seq_len_target,
+            shared_vocab=use_shared_vocab(args),
+            resume_training=resume_training,
+            output_folder=output_folder)
+        max_seq_len_source = config_data.max_seq_len_source
+        max_seq_len_target = config_data.max_seq_len_target
+
+        # Dump the vocabularies if we're just starting up
+        if not resume_training:
+            vocab.save_source_vocabs(source_vocabs, output_folder)
+            vocab.save_target_vocab(target_vocab, output_folder)
+
+        source_vocab_sizes = [len(v) for v in source_vocabs]
+        target_vocab_size = len(target_vocab)
+        logger.info('Vocabulary sizes: source=[%s] target=%d',
+                    '|'.join([str(size) for size in source_vocab_sizes]),
+                    target_vocab_size)
+
+        lr_scheduler_instance = get_lr_scheduler(args=args)
+
+
+        print("train_iter: {}".format(type(train_iter)))
+        print("eval_iter: {}".format(type(eval_iter)))
+        print("config_data: {}".format(type(config_data)))
+        print("source_vocabs: {}".format(type(source_vocabs)))
+        print("target_vocab: {}".format(type(target_vocab)))
+        print("lr_sched: {}".format(type(lr_scheduler_instance)))
+        
+
+        #model configuration
+        model_config = create_model_config_mrt(args=args,
+                                               source_vocab_sizes=source_vocab_sizes, target_vocab_size=target_vocab_size,
+                                               max_seq_len_source=max_seq_len_source, max_seq_len_target=max_seq_len_target,
+                                               config_data=config_data)
+        #model_config.freeze()
+        print("-----------------------")
 
 
 def train(args: argparse.Namespace):
