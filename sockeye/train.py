@@ -108,6 +108,15 @@ def check_arg_compatibility(args: argparse.Namespace):
         check_condition(args.decoder != C.TRANSFORMER_TYPE and args.decoder != C.CONVOLUTION_TYPE,
                         "Decoder pre-training currently supports RNN decoders only.")
 
+    # if args.use_fused_rnn:
+    #    check_condition(not args.use_cpu, "GPU required for FusedRNN cells")
+
+    if args.rnn_residual_connections:
+        check_condition(args.rnn_num_layers > 2, "Residual connections require at least 3 RNN layers")
+
+    check_condition(args.optimized_metric == C.BLEU or args.optimized_metric in args.metrics,
+                        "Must optimize either BLEU or one of tracked metrics (--metrics)")
+
 
 def check_resume(args: argparse.Namespace, output_folder: str) -> bool:
     """
@@ -760,7 +769,34 @@ def main():
     params = arguments.ConfigArgumentParser(description='Train Sockeye sequence-to-sequence models.')
     arguments.add_train_cli_args(params)
     args = params.parse_args()
-    train(args)
+    if args.use_mrt:
+        train_mrt(args)
+    else:
+        train(args)
+
+
+def train_mrt(args: argparse.Namespace):
+    if args.dry_run:
+        # Modify arguments so that we write to a temporary directory and
+        # perform 0 training iterations
+        temp_dir = tempfile.TemporaryDirectory()  # Will be automatically removed
+        args.output = temp_dir.name
+        args.max_updates = 0
+
+    # seed the RNGs
+    utils.seed_rngs(args.seed)
+
+    check_arg_compatibility(args)
+    output_folder = os.path.abspath(args.output)
+
+    global logger
+    logger = setup_main_logger(__name__,
+                               file_logging=True,
+                               console=not args.quiet, path=os.path.join(output_folder, C.LOG_NAME))
+    utils.log_basic_info(args)
+    arguments.save_args(args, os.path.join(output_folder, C.ARGS_STATE_NAME))
+
+
 
 
 def train(args: argparse.Namespace):
