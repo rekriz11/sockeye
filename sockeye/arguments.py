@@ -804,7 +804,7 @@ def add_training_args(params):
 
     train_params.add_argument('--loss',
                               default=C.CROSS_ENTROPY,
-                              choices=[C.CROSS_ENTROPY],
+                              choices=[C.CROSS_ENTROPY, C.SMOOTHED_CROSS_ENTROPY],
                               help='Loss to optimize. Default: %(default)s.')
     train_params.add_argument('--label-smoothing',
                               default=0.1,
@@ -815,6 +815,16 @@ def add_training_args(params):
                               choices=[C.LOSS_NORM_VALID, C.LOSS_NORM_BATCH],
                               help='How to normalize the loss. By default loss is normalized by the number '
                                    'of valid (non-PAD) tokens (%s).' % C.LOSS_NORM_VALID)
+
+    train_params.add_argument('--smoothed-cross-entropy-alpha',
+                              default=0.3,
+                              type=float,
+                              help='Smoothing value for smoothed-cross-entropy loss. Default: %(default)s.')
+    train_params.add_argument('--normalize-loss',
+                              default=False,
+                              action="store_true",
+                              help='If turned on we normalize the loss by dividing by the number of non-PAD tokens.'
+                                   'If turned off the loss is only normalized by the number of sentences in a batch.')
 
     train_params.add_argument('--metrics',
                               nargs='+',

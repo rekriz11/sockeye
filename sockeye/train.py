@@ -677,10 +677,35 @@ def create_model_config_mrt(args: argparse.Namespace,
                                                                config_conv)
 
     #decoder config
-    config_decoder = create_decoder_config_mrt(args, target_vocab_size)
+    #config_decoder = create_decoder_config_mrt(args, target_vocab_size)
+    config_decoder = create_decoder_config(args, encoder_num_hidden, max_seq_len_source, max_seq_len_target, target_vocab_size)
 
     print("endoder: {}".format(config_encoder))
     print("decoder: {}".format(config_decoder))
+
+    source_factor_configs = None
+    if len(source_vocab_sizes) > 1:
+        source_factor_configs = [encoder.FactorConfig(size, dim) for size, dim in zip(source_factor_vocab_sizes,
+                                                                                      args.source_factors_num_embed)]
+
+    config_embed_source = encoder.EmbeddingConfig(vocab_size=source_vocab_size,
+                                                  num_embed=num_embed_source,
+                                                  dropout=embed_dropout_source,
+                                                  factor_configs=source_factor_configs)
+
+    config_embed_target = encoder.EmbeddingConfig(vocab_size=target_vocab_size,
+                                                  num_embed=num_embed_target,
+                                                  dropout=embed_dropout_target)
+
+    config_loss = loss.LossConfig(name=args.loss,
+                                  vocab_size=target_vocab_size,
+                                  normalization_type=args.loss_normalization_type,
+                                  normalize=args.normalize_loss,
+                                  label_smoothing=args.label_smoothing,
+                                  smoothed_cross_entropy_alpha=args.smoothed_cross_entropy_alpha)
+
+    print("loss: {}".format(config_loss))
+
 
 def create_model_config(args: argparse.Namespace,
                         source_vocab_sizes: List[int],
@@ -957,7 +982,7 @@ def train_mrt(args: argparse.Namespace):
         print("source_vocabs: {}".format(type(source_vocabs)))
         print("target_vocab: {}".format(type(target_vocab)))
         print("lr_sched: {}".format(type(lr_scheduler_instance)))
-        
+
 
         #model configuration
         model_config = create_model_config_mrt(args=args,
