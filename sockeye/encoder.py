@@ -254,6 +254,14 @@ class Encoder(ABC):
         """
         raise NotImplementedError()
 
+
+    def get_rnn_cells(self) -> List[mx.rnn.BaseRNNCell]:
+        """
+        Returns a list of RNNCells used by this encoder.
+        """
+        raise NotImplementedError()
+
+
     def get_encoded_seq_len(self, seq_len: int) -> int:
         """
         :return: The size of the encoded sequence.
@@ -299,6 +307,12 @@ class ConvertLayout(Encoder):
 
     def get_num_hidden(self) -> int:
         return self.num_hidden
+
+    def get_rnn_cells(self) -> List[mx.rnn.BaseRNNCell]:
+        """
+        Returns a list of RNNCells used by this encoder.
+        """
+        return []
 
 
 class ReverseSequence(Encoder):
@@ -739,6 +753,16 @@ class EncoderSequence(Encoder):
         Return the representation size of this encoder.
         """
         return self.encoders[-1].get_num_hidden()
+
+    def get_rnn_cells(self) -> List[mx.rnn.BaseRNNCell]:
+        """
+        Returns a list of RNNCells used by this encoder.
+        """
+        cells = []
+        for encoder in self.encoders:
+            for cell in encoder.get_rnn_cells():
+                cells.append(cell)
+        return cells
 
     def get_encoded_seq_len(self, seq_len: int) -> int:
         """

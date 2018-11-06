@@ -146,6 +146,14 @@ class Decoder(ABC):
         """
         pass
 
+    def get_rnn_cells(self) -> List[mx.rnn.BaseRNNCell]:
+        """
+        Returns a list of RNNCells used by this decoder.
+
+        :raises: NotImplementedError
+        """
+        raise NotImplementedError()
+
     @abstractmethod
     def init_states(self,
                     source_encoded: mx.sym.Symbol,
@@ -544,6 +552,8 @@ class RecurrentDecoder(Decoder):
                                   "output dimensions do not match.")
 
         # Stacked RNN
+        self.rnn = rnn.get_stacked_rnn(self.rnn_config, self.prefix)
+
         if self.rnn_config.num_layers == 1 or not self.config.attention_in_upper_layers:
             self.rnn_pre_attention = rnn.get_stacked_rnn(self.rnn_config, self.prefix, parallel_inputs=False)
             self.rnn_post_attention = None
@@ -758,6 +768,12 @@ class RecurrentDecoder(Decoder):
         :return: The representation size of this decoder.
         """
         return self.num_hidden
+
+    def get_rnn_cells(self) -> List[mx.rnn.BaseRNNCell]:
+        """
+        Returns a list of RNNCells used by this decoder.
+        """
+        return [self.rnn]
 
     def init_states(self,
                     source_encoded: mx.sym.Symbol,

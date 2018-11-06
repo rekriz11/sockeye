@@ -706,6 +706,38 @@ def create_model_config_mrt(args: argparse.Namespace,
 
     print("loss: {}".format(config_loss))
 
+    '''
+    model_config = model.ModelConfig(config_data=config_data,
+                                     max_seq_len=max_seq_len_source,
+                                     vocab_source_size=source_vocab_size,
+                                     vocab_target_size=target_vocab_size,
+                                     config_encoder=config_encoder,
+                                     config_decoder=config_decoder,
+                                     config_attention=config_decoder.attention_config,
+                                     config_loss=config_loss,
+                                     lexical_bias=args.lexical_bias,
+                                     learn_lexical_bias=args.learn_lexical_bias,
+                                     weight_tying=args.weight_tying,
+                                     weight_tying_type=args.weight_tying_type if args.weight_tying else None)
+    '''
+    model_config = model.ModelConfig(config_data=config_data,
+                                     max_seq_len=max_seq_len_source,
+                                     vocab_source_size=source_vocab_size,
+                                     vocab_target_size=target_vocab_size,
+                                     config_embed_source=config_embed_source,
+                                     config_embed_target=config_embed_target,
+                                     config_encoder=config_encoder,
+                                     config_decoder=config_decoder,
+                                     config_loss=config_loss,
+                                     weight_tying=args.weight_tying,
+                                     weight_tying_type=args.weight_tying_type if args.weight_tying else None,
+                                     weight_normalization=args.weight_normalization,
+                                     lhuc=args.lhuc is not None)
+
+    print("model_config: {}".format(model_config))
+
+    return model_config
+
 
 def create_model_config(args: argparse.Namespace,
                         source_vocab_sizes: List[int],
@@ -784,7 +816,7 @@ def create_model_config(args: argparse.Namespace,
                                      lhuc=args.lhuc is not None)
     return model_config
 
-
+'''
 def create_training_model(config: model.ModelConfig,
                           context: List[mx.Context],
                           output_dir: str,
@@ -811,7 +843,7 @@ def create_training_model(config: model.ModelConfig,
                                             fixed_param_names=args.fixed_param_names)
 
     return training_model
-
+'''
 
 def gradient_compression_params(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
     """
@@ -989,9 +1021,21 @@ def train_mrt(args: argparse.Namespace):
                                                source_vocab_sizes=source_vocab_sizes, target_vocab_size=target_vocab_size,
                                                max_seq_len_source=max_seq_len_source, max_seq_len_target=max_seq_len_target,
                                                config_data=config_data)
-        #model_config.freeze()
-        print("-----------------------")
+        model_config.freeze()
 
+        # create training model
+        '''
+        logger.info("Minimum Risk Training")
+        training_model = training.MRTrainingModel(config=model_config,
+                                                  context=context,
+                                                  train_iter=train_iter,
+                                                  fused=args.use_fused_rnn,
+                                                  bucketing=not args.no_bucketing,
+                                                  lr_scheduler=lr_scheduler_instance,
+                                                  state_names=['is_sample'],
+                                                  grad_req='add')
+        '''
+        print("-----------------------")
 
 def train(args: argparse.Namespace):
     if args.dry_run:
