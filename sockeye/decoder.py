@@ -482,6 +482,8 @@ class RecurrentDecoderConfig(Config):
                  enc_last_hidden_concat_to_embedding: bool = False,
                  scheduled_sampling_type: Optional[str] = None,
                  scheduled_sampling_decay_params: Optional[List[float]] = None,
+                 dropout: float = .0,
+                 weight_tying: bool = False,
                  use_mrt: bool = False,
                  mrt_num_samples: int = 0,
                  mrt_sup_grad_scale: float = 1.0,
@@ -504,6 +506,8 @@ class RecurrentDecoderConfig(Config):
         self.enc_last_hidden_concat_to_embedding = enc_last_hidden_concat_to_embedding
         self.scheduled_sampling_type = scheduled_sampling_type
         self.scheduled_sampling_decay_params = scheduled_sampling_decay_params
+        self.dropout = dropout
+        self.weight_tying = weight_tying
         self.use_mrt = use_mrt
         self.mrt_num_samples = mrt_num_samples
         self.mrt_sup_grad_scale = mrt_sup_grad_scale
@@ -530,9 +534,16 @@ class RecurrentDecoder(Decoder):
         # TODO: implement variant without input feeding
         self.config = config
         self.rnn_config = config.rnn_config
+        self.target_vocab_size = config.vocab_size
+        self.num_target_embed = config.num_embed
+
         self.attention = rnn_attention.get_attention(config.attention_config,
                                                      config.max_seq_len_source,
                                                      prefix + C.ATTENTION_PREFIX)
+
+        self.weight_tying = config.weight_tying
+        self.context_gating = config.context_gating
+
         self.prefix = prefix
 
         self.num_hidden = self.rnn_config.num_hidden
@@ -571,12 +582,24 @@ class RecurrentDecoder(Decoder):
         self.hidden_w = mx.sym.Variable("%shidden_weight" % prefix)
         self.hidden_b = mx.sym.Variable("%shidden_bias" % prefix)
         self.hidden_norm = None
+
         if self.config.layer_normalization:
             self.hidden_norm = layers.LayerNormalization(prefix="%shidden_norm" % prefix)
+
+        # Embedding & output parameters
+        embed_weight = mx.sym.Variable(C.TARGET_EMBEDDING_PREFIX + "weight")
+        config_embed_target = encoder.EmbeddingConfig(vocab_size=self.target_vocab_size,
+                                                      num_embed=self.num_target_embed,
+                                                      dropout=self.config.dropout)
+
+        self.embedding = encoder.Embedding(config=config_embed_target,
+                                           prefix=C.TARGET_EMBEDDING_PREFIX,
+                                           embed_weight=embed_weight)  # TODO dropout?
 
         self.scheduled_sampling_type = config.scheduled_sampling_type
         self.scheduled_sampling_decay_params = config.scheduled_sampling_decay_params
         self._get_sampling_threshold = self._link_sampling_scheduler()
+
 
     def _link_sampling_scheduler(self):
          i = mx.sym.Variable('updates')
@@ -768,12 +791,6 @@ class RecurrentDecoder(Decoder):
         :return: The representation size of this decoder.
         """
         return self.num_hidden
-
-    def get_rnn_cells(self) -> List[mx.rnn.BaseRNNCell]:
-        """
-        Returns a list of RNNCells used by this decoder.
-        """
-        return [self.rnn]
 
     def init_states(self,
                     source_encoded: mx.sym.Symbol,
@@ -1022,88 +1039,6 @@ class RecurrentDecoder(Decoder):
                                    name="%snext_hidden_t%d" % (self.prefix, seq_idx))
         return hidden
 
-
-    def decode_iter(self,
-                    source_encoded: mx.sym.Symbol,
-                    source_seq_len: int,
-                    source_length: mx.sym.Symbol,
-                    target: mx.sym.Symbol,
-                    target_seq_len: int,
-                    source_lexicon: Optional[mx.sym.Symbol] = None) -> mx.sym.Symbol:
-        """
-        Returns sampled sequences of words and associated probabilities for those words.
-
-        :param source_encoded: Concatenated encoder states. Shape: (source_seq_len, batch_size, encoder_num_hidden).
-        :param source_seq_len: Maximum source sequence length.
-        :param source_length: Lengths of source sequences. Shape: (batch_size,).
-        :param target: Target sequence. Shape: (batch_size, target_seq_len).
-        :param target_seq_len: Maximum target sequence length.
-        :return: Probabilities of next-word predictions for target sequence.
-                 Shape: (batch_size * target_seq_len, target_vocab_size)
-
-                 Threshold that determines to use the ground truth words or previous model predictions as inputs.
-                 Shape: (1,)
-
-        """
-
-        # process encoder states
-        source_encoded_batch_major = mx.sym.swapaxes(source_encoded, dim1=0, dim2=1, name='source_encoded_batch_major')
-
-        # slice target words
-        # target: target_seq_len * (batch_size,)
-        target = mx.sym.split(data=target, num_outputs=target_seq_len, axis=1, squeeze_axis=True)
-
-        # get recurrent attention function conditioned on source
-        attention_func = self.attention.on(source_encoded_batch_major, source_length, source_seq_len)
-        attention_state = self.attention.get_initial_state(source_length, source_seq_len)
-
-        # initialize decoder states
-        # hidden: (batch_size, rnn_num_hidden)
-        # layer_states: List[(batch_size, state_num_hidden]
-        state = self.compute_init_states(source_encoded, source_length)
-
-        self.rnn.reset()
-
-        probs_all = []
-
-        threshold = self._get_sampling_threshold()
-        rnd_val = mx.sym.random_uniform(low=0, high=1.0, shape=1)[0]
-
-        for seq_idx in range(target_seq_len):
-            if seq_idx == 0:
-                input_words = target[seq_idx]
-            else:
-                # choose input words depending on tossing a biased coin (p = rnd_val)
-                # if rnd_val < threshold, then use ground truth
-                # otherwise we use model predictions made at the previous time step.
-                # XXX threshold decreases over time
-                input_words = mx.sym.where(rnd_val < threshold,
-                                           mx.sym.cast(target[seq_idx], dtype='int32'), sampled_words)
-
-            trg_emb, _, _ = self.embedding.encode(input_words, None, 1)
-            state, attention_state = self._step(trg_emb,
-                                                state,
-                                                attention_func,
-                                                attention_state,
-                                                seq_idx)
-
-            # (batch_size, target_vocab_size)
-            logit = mx.sym.FullyConnected(data=state.hidden, num_hidden=self.target_vocab_size,
-                                          weight=self.cls_w, bias=self.cls_b, name=C.LOGITS_NAME)
-
-            prob = mx.sym.softmax(logit)
-            sampled_words = mx.sym.sample_multinomial(prob)
-            sampled_words = mx.sym.BlockGrad(sampled_words)
-
-            probs_all.append(prob)
-
-        # probs: (batch_size, target_seq_len, target_vocab_size)
-        probs = mx.sym.concat(*probs_all, dim=1, name='probs')
-        # probs: (batch_size * target_seq_len, target_vocab_size)
-        probs = mx.sym.reshape(data=probs, shape=(-1, self.target_vocab_size))
-
-        return [probs, threshold]
-
     def decode_mrt(self,
                    source_encoded: mx.sym.Symbol,
                    source_seq_len: int,
@@ -1145,7 +1080,7 @@ class RecurrentDecoder(Decoder):
         # initialize decoder states
         # hidden: (batch_size, rnn_num_hidden)
         # layer_states: List[(batch_size, state_num_hidden]
-        state = self.compute_init_states(source_encoded, source_length)
+        state = self.get_initial_state(source_encoded, source_length)
 
         self.rnn.reset()
 
@@ -1240,59 +1175,6 @@ class RecurrentDecoder(Decoder):
         sample_probs = mx.sym.swapaxes(sample_probs, dim1=0, dim2=1)
 
         return mx.sym.Group([sampled_words, sample_probs])
-
-
-    def predict(self,
-                word_id_prev: mx.sym.Symbol,
-                state_prev: RecurrentDecoderState,
-                attention_func: Callable,
-                attention_state_prev: rnn_attention.AttentionState,
-                source_lexicon: Optional[mx.sym.Symbol] = None,
-                softmax_temperature: Optional[float] = None) -> Tuple[mx.sym.Symbol,
-                                                                      RecurrentDecoderState,
-                                                                      rnn_attention.AttentionState]:
-        """
-        Given previous word id, attention function, previous hidden state and RNN layer states,
-        returns Softmax predictions (not a loss symbol), next hidden state, and next layer
-        states. Used for inference.
-
-        :param word_id_prev: Previous target word id. Shape: (1,).
-        :param state_prev: Previous decoder state consisting of hidden and layer states.
-        :param attention_func: Attention function to produce context vector.
-        :param attention_state_prev: Previous attention state.
-        :param source_lexicon: Lexical biases for current sentence.
-               Shape: (batch_size, target_vocab_size, source_seq_len).
-        :param softmax_temperature: Optional parameter to control steepness of softmax distribution.
-        :return: (predicted next-word distribution, decoder state, attention state).
-        """
-        # target side embedding
-        word_vec_prev, _, _ = self.embedding.encode(word_id_prev, None, 1)
-
-        # state.hidden: (batch_size, rnn_num_hidden)
-        # attention_state.dynamic_source: (batch_size, source_seq_len, coverage_num_hidden)
-        # attention_state.probs: (batch_size, source_seq_len)
-        state, attention_state = self._step(word_vec_prev,
-                                            state_prev,
-                                            attention_func,
-                                            attention_state_prev)
-
-        # logits: (batch_size, target_vocab_size)
-        logits = mx.sym.FullyConnected(data=state.hidden, num_hidden=self.target_vocab_size,
-                                       weight=self.cls_w, bias=self.cls_b, name=C.LOGITS_NAME)
-
-        if source_lexicon is not None:
-            assert self.lexicon is not None
-            # lex_bias: (batch_size, 1, target_vocab_size)
-            lex_bias = self.lexicon.calculate_lex_bias(source_lexicon, attention_state.probs)
-            # lex_bias: (batch_size, target_vocab_size)
-            lex_bias = mx.sym.reshape(data=lex_bias, shape=(-1, self.target_vocab_size))
-            logits = mx.sym.broadcast_add(lhs=logits, rhs=lex_bias, name='%s_plus_lex_bias' % C.LOGITS_NAME)
-
-        if softmax_temperature is not None:
-            logits /= softmax_temperature
-
-        softmax_out = mx.sym.softmax(data=logits, name=C.SOFTMAX_NAME)
-        return softmax_out, state, attention_state
 
 
 class ConvolutionalDecoderConfig(Config):
