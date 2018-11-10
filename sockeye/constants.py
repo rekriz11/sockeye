@@ -177,6 +177,7 @@ LOGIT_INPUTS_NAME = "logit_inputs"
 LOGITS_NAME = "logits"
 SOFTMAX_NAME = "softmax"
 SOFTMAX_OUTPUT_NAME = SOFTMAX_NAME + "_output"
+GEN_WORDS_NAME = "gen_words"
 
 MEASURE_SPEED_EVERY = 50  # measure speed and metrics every X batches
 

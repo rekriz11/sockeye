@@ -28,6 +28,7 @@ from . import convolution
 from . import rnn
 from . import transformer
 from . import utils
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -356,7 +357,10 @@ class EmbeddingConfig(config.Config):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_embed = num_embed
-        self.dropout = dropout
+        if isinstance(dropout, tuple):
+            self.dropout = dropout[1]
+        else:
+            self.dropout = dropout
         self.factor_configs = factor_configs
         self.num_factors = 1
         if self.factor_configs is not None:
@@ -433,6 +437,9 @@ class Embedding(Encoder):
 
         if self.config.factor_configs is not None:
             embedding = mx.sym.concat(embedding, *factor_embeddings, dim=2, name=self.prefix + "embed_plus_factors")
+
+
+
 
         if self.config.dropout > 0:
             embedding = mx.sym.Dropout(data=embedding, p=self.config.dropout, name="source_embed_dropout")

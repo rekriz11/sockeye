@@ -27,6 +27,7 @@ from . import encoder
 from . import layers
 from . import loss
 from . import utils
+from . import lexicon
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,10 @@ class SockeyeModel:
         # encoder & decoder first (to know the decoder depth)
         self.encoder = encoder.get_encoder(self.config.config_encoder, prefix=self.prefix)
         self.decoder = decoder.get_decoder(self.config.config_decoder, prefix=self.prefix)
+
+        self.lexicon = lexicon.Lexicon(self.config.vocab_source_size,
+                                       self.config.vocab_target_size,
+                                       self.config.learn_lexical_bias) if self.config.lexical_bias else None
 
         # source & target embeddings
         embed_weight_source, embed_weight_target, out_weight_target = self._get_embed_weights(self.prefix)

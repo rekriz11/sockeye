@@ -46,6 +46,7 @@ from .config import Config
 from .log import setup_main_logger
 from .optimizers import OptimizerConfig
 from .utils import check_condition
+from . import policy_gradient
 
 # Temporary logger, the real one (logging to a file probably, will be created in the main function)
 logger = setup_main_logger(__name__, file_logging=False, console=True)
@@ -472,6 +473,7 @@ def create_decoder_config_mrt(args: argparse.Namespace, target_vocab_size: int) 
     _, decoder_rnn_dropout_inputs = args.rnn_dropout_inputs
     _, decoder_rnn_dropout_states = args.rnn_dropout_states
     _, decoder_rnn_dropout_recurrent = args.rnn_dropout_recurrent
+    _, embed_dropout_target = args.embed_dropout
 
     config_rnn = rnn.RNNConfig(cell_type=args.rnn_cell_type,
                                num_hidden=args.rnn_num_hidden,
@@ -487,7 +489,7 @@ def create_decoder_config_mrt(args: argparse.Namespace, target_vocab_size: int) 
     config_decoder = decoder.RecurrentDecoderConfig(vocab_size=target_vocab_size,
                                                     num_embed=num_embed_target,
                                                     rnn_config=config_rnn,
-                                                    dropout=decoder_rnn_dropout_recurrent,
+                                                    dropout=embed_dropout_target,
                                                     weight_tying=decoder_weight_tying,
                                                     context_gating=args.rnn_context_gating,
                                                     layer_normalization=args.layer_normalization,
@@ -585,6 +587,9 @@ def create_decoder_config(args: argparse.Namespace, encoder_num_hidden: int,
         _, decoder_rnn_dropout_states = args.rnn_dropout_states
         _, decoder_rnn_dropout_recurrent = args.rnn_dropout_recurrent
 
+        decoder_weight_tying = args.weight_tying and C.WEIGHT_TYING_TRG in args.weight_tying_type \
+                               and C.WEIGHT_TYING_SOFTMAX in args.weight_tying_type
+
         config_decoder = decoder.RecurrentDecoderConfig(
             vocab_size=target_vocab_size,
             num_embed=num_embed_target,
@@ -609,6 +614,8 @@ def create_decoder_config(args: argparse.Namespace, encoder_num_hidden: int,
             enc_last_hidden_concat_to_embedding=args.rnn_enc_last_hidden_concat_to_embedding,
             scheduled_sampling_type=args.scheduled_sampling_type,
             scheduled_sampling_decay_params=args.scheduled_sampling_decay_params,
+            dropout=args.rnn_dropout_recurrent,
+            weight_tying=decoder_weight_tying,
             use_mrt=args.use_mrt,
             mrt_num_samples=args.mrt_num_samples,
             mrt_sup_grad_scale=args.mrt_sup_grad_scale,
@@ -816,7 +823,7 @@ def create_model_config(args: argparse.Namespace,
                                      lhuc=args.lhuc is not None)
     return model_config
 
-'''
+
 def create_training_model(config: model.ModelConfig,
                           context: List[mx.Context],
                           output_dir: str,
@@ -843,7 +850,41 @@ def create_training_model(config: model.ModelConfig,
                                             fixed_param_names=args.fixed_param_names)
 
     return training_model
-'''
+
+
+def create_training_model_mrt(config: model.ModelConfig,
+                              context: List[mx.Context],
+                              output_dir: str,
+                              train_iter: data_io.BaseParallelSampleIter,
+                              args: argparse.Namespace,
+                              state_names,
+                              grad_req) -> training.TrainingModel:
+    """
+    Create a training model and load the parameters from disk if needed.
+
+    :param config: The configuration for the model.
+    :param context: The context(s) to run on.
+    :param output_dir: Output folder.
+    :param train_iter: The training data iterator.
+    :param args: Arguments as returned by argparse.
+    :return: The training model.
+    """
+    training_model = training.TrainingModelMRT(config=config,
+                                                context=context,
+                                                output_dir=output_dir,
+                                                train_iter=train_iter,
+                                                provide_data=train_iter.provide_data,
+                                                provide_label=train_iter.provide_label,
+                                                default_bucket_key=train_iter.default_bucket_key,
+                                                fused=args.use_fused_rnn,
+                                                bucketing=not args.no_bucketing,
+                                                state_names=state_names,
+                                                grad_req=grad_req,
+                                                gradient_compression_params=gradient_compression_params(args),
+                                                fixed_param_names=args.fixed_param_names)
+
+    return training_model
+
 
 def gradient_compression_params(args: argparse.Namespace) -> Optional[Dict[str, Any]]:
     """
@@ -1023,7 +1064,17 @@ def train_mrt(args: argparse.Namespace):
                                                config_data=config_data)
         model_config.freeze()
 
-        # create training model
+
+        training_model = create_training_model_mrt(config=model_config,
+                                                   context=context,
+                                                   output_dir=output_folder,
+                                                   train_iter=train_iter,
+                                                   args=args,
+                                                   state_names=['is_sample'],
+                                                   grad_req='add')
+
+
+
         '''
         logger.info("Minimum Risk Training")
         training_model = training.MRTrainingModel(config=model_config,

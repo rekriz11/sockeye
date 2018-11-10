@@ -596,6 +596,15 @@ class RecurrentDecoder(Decoder):
                                            prefix=C.TARGET_EMBEDDING_PREFIX,
                                            embed_weight=embed_weight)  # TODO dropout?
 
+        if self.weight_tying:
+            utils.check_condition(self.num_hidden == self.num_target_embed,
+                            "Weight tying requires target embedding size and rnn_num_hidden to be equal")
+            logger.debug("Tying the target embeddings and prediction matrix.")
+            self.cls_w = embed_weight
+        else:
+            self.cls_w = mx.sym.Variable("%scls_weight" % prefix)
+        self.cls_b = mx.sym.Variable("%scls_bias" % prefix)
+
         self.scheduled_sampling_type = config.scheduled_sampling_type
         self.scheduled_sampling_decay_params = config.scheduled_sampling_decay_params
         self._get_sampling_threshold = self._link_sampling_scheduler()
@@ -1122,6 +1131,7 @@ class RecurrentDecoder(Decoder):
 
             logit = mx.sym.FullyConnected(data=state.hidden, num_hidden=self.target_vocab_size,
                                           weight=self.cls_w, bias=self.cls_b)
+
 
             prob = mx.sym.softmax(logit)
             next_words = mx.sym.where(is_sample > 0,
