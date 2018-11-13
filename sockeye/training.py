@@ -228,9 +228,9 @@ class TrainingModelMRT(model.SockeyeModel):
         print((provide_data))
         print(provide_label)
 
-        exit(1)
-        self.module.bind(data_shapes=self.train_iter.provide_data,
-                         label_shapes=self.train_iter.provide_label,
+
+        self.module.bind(data_shapes=provide_data,
+                         label_shapes=provide_label,
                          for_training=True,
                          force_rebind=True,
                          grad_req='write')
