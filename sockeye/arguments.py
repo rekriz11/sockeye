@@ -795,8 +795,14 @@ def add_training_args(params):
 
     train_params.add_argument('--loss',
                               default=C.CROSS_ENTROPY,
-                              choices=[C.CROSS_ENTROPY],
+                              choices=[C.CROSS_ENTROPY, C.SIMPLE_CROSS_ENTROPY],
                               help='Loss to optimize. Default: %(default)s.')
+    train_params.add_argument('--complexity-file',
+                              default="NONE",
+                              help='Path to pickled file with complexity predictions for vocab. Default: %(default)s.')
+    train_params.add_argument('--complexity-weight',
+                              default=0.0,
+                              help='Weight constant for how much to upweight simpler words. Default: %(default)s.')
     train_params.add_argument('--label-smoothing',
                               default=0.1,
                               type=float,

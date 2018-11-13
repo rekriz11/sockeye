@@ -361,6 +361,7 @@ EVALUATE_METRICS = [BLEU, CHRF, ROUGE1, ROUGE2, ROUGEL]
 
 # loss
 CROSS_ENTROPY = 'cross-entropy'
+SIMPLE_CROSS_ENTROPY = 'simple-cross-entropy'
 
 LOSS_NORM_BATCH = 'batch'
 LOSS_NORM_VALID = "valid"

@@ -20,12 +20,32 @@ from typing import List, Optional
 
 import mxnet as mx
 from mxnet.metric import EvalMetric
+from mxnet.symbol import broadcast_mul
 
 from . import config
 from . import constants as C
 
 logger = logging.getLogger(__name__)
 
+import pickle
+import numpy as np
+
+## ADDED CODE: gets simple probabilities from pickle file (generated beforehand)
+def get_simple_probs(pickle_file, complexity_weight):
+    with open(pickle_file, 'rb') as f:
+        complex_preds = pickle.load(f)
+
+    new_preds = []
+    for p in complex_preds:
+        if p == -1.0:
+            new_preds.append(1.0)
+        else:
+            new_preds.append(4.0 - p + 1.0)
+    ## Normalizes all probabilities
+    new_preds = [(p/sum(new_preds)) ** complexity_weight for p in new_preds]
+    print("LENGTH OF PREDICTIONS: " + str(len(new_preds)))
+       
+    return mx.nd.array(new_preds)
 
 class LossConfig(config.Config):
     """
@@ -41,12 +61,17 @@ class LossConfig(config.Config):
                  name: str,
                  vocab_size: int,
                  normalization_type: str,
-                 label_smoothing: float = 0.0) -> None:
+                 label_smoothing: float = 0.0, 
+                 complexity_file: str = "NONE", 
+                 complexity_weight: float = 0.0) -> None:
         super().__init__()
+
         self.name = name
         self.vocab_size = vocab_size
         self.normalization_type = normalization_type
         self.label_smoothing = label_smoothing
+        self.complexity_file = complexity_file
+        self.complexity_weight = complexity_weight
 
 
 def get_loss(loss_config: LossConfig) -> 'Loss':
@@ -57,6 +82,10 @@ def get_loss(loss_config: LossConfig) -> 'Loss':
     """
     if loss_config.name == C.CROSS_ENTROPY:
         return CrossEntropyLoss(loss_config)
+
+    ## This is where we need to put it!
+    elif loss_config.name == C.SIMPLE_CROSS_ENTROPY:
+        return SimpleCrossEntropyLoss(loss_config)
     else:
         raise ValueError("unknown loss name: %s" % loss_config.name)
 
@@ -114,6 +143,7 @@ class CrossEntropyLoss(Loss):
             normalization = "null"
         else:
             raise ValueError("Unknown loss normalization type: %s" % self.loss_config.normalization_type)
+
         return [mx.sym.SoftmaxOutput(data=logits,
                                      label=labels,
                                      ignore_label=C.PAD_ID,
@@ -121,6 +151,74 @@ class CrossEntropyLoss(Loss):
                                      normalization=normalization,
                                      smooth_alpha=self.loss_config.label_smoothing,
                                      name=C.SOFTMAX_NAME)]
+
+    def create_metric(self) -> "CrossEntropyMetric":
+        return CrossEntropyMetric(self.loss_config)
+
+class SimpleCrossEntropyLoss(Loss):
+    """
+    Computes a simplified cross-entropy loss. 
+    :param alpha: Smoothing value.
+    :param vocab_size: Size of the target vocabulary.
+    :param normalize: If True normalize the gradient by dividing by the number of non-PAD tokens.
+    """
+
+    def __init__(self, loss_config: LossConfig) -> None:
+        logger.info("Loss: SimpleCrossEntropy(normalization_type=%s, label_smoothing=%s)",
+                    loss_config.normalization_type, loss_config.label_smoothing)
+        self.loss_config = loss_config
+        self._alpha = loss_config.label_smoothing
+        self._vocab_size = loss_config.vocab_size
+        self._normalize = loss_config.normalization_type
+        self._complexity_file = loss_config.complexity_file
+        self._complexity_weight = loss_config.complexity_weight
+
+        complex_preds = mx.nd.array([])
+        if self._complexity_file != "NONE":
+            complex_preds = get_simple_probs(self._complexity_file, self._complexity_weight)
+        self._complex_preds = complex_preds
+
+
+    def get_loss(self, logits: mx.sym.Symbol, labels: mx.sym.Symbol) -> List[mx.sym.Symbol]:
+        """
+        Returns loss and softmax output symbols given logits and integer-coded labels.
+        :param logits: Shape: (batch_size * target_seq_len, target_vocab_size).
+        :param labels: Shape: (batch_size * target_seq_len,).
+        :return: List of loss and softmax output symbols.
+        """
+        probs = mx.sym.softmax(data=logits)
+
+        on_value = 1.0 - self._alpha
+        off_value = self._alpha / (self._vocab_size - 1.0)
+        cross_entropy = mx.sym.one_hot(indices=mx.sym.cast(data=labels, dtype='int32'),
+                                       depth=self._vocab_size,
+                                       on_value=on_value,
+                                       off_value=off_value)
+        # zero out pad symbols (0)
+        cross_entropy = mx.sym.where(labels, cross_entropy, mx.sym.zeros((0, self._vocab_size)))
+
+        ## ADDED CODE: makes a symbol of the complexity weights
+        #weights = mx.sym.Variable('weights', shape = (len(self._complex_preds)), init = mx.init.One())
+        weights = mx.sym.Variable('weights', \
+                                  shape = self._complex_preds.shape, \
+                                  init = mx.init.One())
+       
+        func = (weights).bind(mx.cpu(), {'weights': self._complex_preds})
+        weights = mx.sym.BlockGrad(weights)
+
+        #weights.set_params(self._complex_preds)
+
+        ## ADDED CODE: does element-wise multiplication
+        weighted_probs = broadcast_mul(probs, weights)
+        cross_entropy = - mx.sym.log(data=weighted_probs) * cross_entropy
+        
+        #cross_entropy = - mx.sym.log(data=probs + 1e-10) * cross_entropy
+        cross_entropy = mx.sym.sum(data=cross_entropy, axis=1)
+
+        cross_entropy = mx.sym.MakeLoss(cross_entropy, name=C.SIMPLE_CROSS_ENTROPY)
+        probs = mx.sym.BlockGrad(weighted_probs, name=C.SOFTMAX_NAME)
+        
+        return [cross_entropy, probs]
 
     def create_metric(self) -> "CrossEntropyMetric":
         return CrossEntropyMetric(self.loss_config)
