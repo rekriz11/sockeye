@@ -795,8 +795,14 @@ def add_training_args(params):
 
     train_params.add_argument('--loss',
                               default=C.CROSS_ENTROPY,
-                              choices=[C.CROSS_ENTROPY],
+                              choices=[C.CROSS_ENTROPY, C.SIMPLE_CROSS_ENTROPY],
                               help='Loss to optimize. Default: %(default)s.')
+    train_params.add_argument('--complexity-file',
+                              default="NONE",
+                              help='Path to pickled file with complexity predictions for vocab. Default: %(default)s.')
+    train_params.add_argument('--complexity-weight',
+                              default=0.0,
+                              help='Weight constant for how much to upweight simpler words. Default: %(default)s.')
     train_params.add_argument('--label-smoothing',
                               default=0.1,
                               type=float,
@@ -1282,14 +1288,6 @@ def add_inference_args(params):
                                type=str,
                                help='EXPERIMENTAL: may be changed or removed in future. Overrides training dtype of '
                                     'encoders and decoders during inference. Default: %(default)s')
-    decode_params.add_argument('--beam-block-ngram',
-                               default=0,
-                               type=int,
-                               help='Block all repeating ngrams up to length n')
-    decode_params.add_argument('--single-hyp-max',
-                               default=0,
-                               type=int,
-                               help='Limit the number of continuations that can come from a single hypothesis.')
 
 
 def add_evaluate_args(params):

@@ -37,8 +37,11 @@ class Config(yaml.YAMLObject, metaclass=TaggedYamlObjectMetaclass):
     def __setattr__(self, key, value):
         if hasattr(self, '_frozen') and getattr(self, '_frozen'):
             raise AttributeError("Cannot set '%s' in frozen config" % key)
-        if value == self:
-            raise AttributeError("Cannot set self as attribute")
+        try:
+            if value == self:
+                raise AttributeError("Cannot set self as attribute")
+        except ValueError:
+            a = 1
         object.__setattr__(self, key, value)
 
     def __setstate__(self, state):

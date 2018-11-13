@@ -140,9 +140,8 @@ class TrainingModel(model.SockeyeModel):
             # output layer
             # logits: (batch_size * target_seq_len, target_vocab_size)
             logits = self.output_layer(target_decoded)
-
+  
             loss_output = self.model_loss.get_loss(logits, labels)
-
             return mx.sym.Group(loss_output), data_names, label_names
 
         if self.config.lhuc:
@@ -661,6 +660,7 @@ class EarlyStoppingTrainer:
         ####################
         # Forward & Backward
         ####################
+
         model.run_forward_backward(batch, metric_train)
 
         ####################

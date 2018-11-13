@@ -632,10 +632,13 @@ def create_model_config(args: argparse.Namespace,
                                                   num_embed=num_embed_target,
                                                   dropout=embed_dropout_target)
 
+    ## ADDED CODE: Added argument for simple file
     config_loss = loss.LossConfig(name=args.loss,
                                   vocab_size=target_vocab_size,
                                   normalization_type=args.loss_normalization_type,
-                                  label_smoothing=args.label_smoothing)
+                                  label_smoothing=args.label_smoothing,
+                                  complexity_file=args.complexity_file,
+                                  complexity_weight=args.complexity_weight)
 
     model_config = model.ModelConfig(config_data=config_data,
                                      vocab_source_size=source_vocab_size,
@@ -760,6 +763,11 @@ def main():
     params = arguments.ConfigArgumentParser(description='Train Sockeye sequence-to-sequence models.')
     arguments.add_train_cli_args(params)
     args = params.parse_args()
+    ## ADDED CODE: Hard-coded path to complexity file on tesla and weight to give these
+    #args.complexity_file = "/home/rekriz/sockeye-recipes/new_scripts/change_loss/complexity_predictions.pkl"
+    print(args.complexity_weight)
+    args.complexity_weight = float(args.complexity_weight)
+    print(args.complexity_weight)
     train(args)
 
 
