@@ -1056,6 +1056,176 @@ class RecurrentDecoder(Decoder):
                    target_seq_len: int,
                    max_target_seq_len_ratio: int,
                    is_sample: mx.sym.Symbol,
+                   batch_size: int,
+                   entropy_reg: float = 0.0001,
+                   grad_scale: float = 1.0,
+                   source_lexicon: Optional[mx.sym.Symbol] = None) -> mx.sym.Symbol:
+        """
+        Returns sampled sequences of words and associated probabilities for those words.
+
+        :param source_encoded: Concatenated encoder states. Shape: (source_seq_len, batch_size, encoder_num_hidden) -
+                                                                    (batch_size, source_encoded_length, encoder_depth).
+        :param source_seq_len: Maximum source sequence length.
+        :param source_length: Lengths of source sequences. Shape: (batch_size,).
+        :param labels: Target sequence. Shape: (batch_size, target_seq_len).
+        :param target_seq_len: Maximum target sequence length.
+        :param max_target_seq_len_ratio: Ratio of the generated sequences' maximum length w.r.t. the original maximum target sequence length.
+        :param is_sample: An RNN chooses sampled words as next inputs if is_sample == 1, otherwise true targets.
+        :param source_lexicon: Lexical biases for current sentence.
+               Shape: (batch_size, target_vocab_size, source_seq_len)
+        :return: sampled words
+                 Shape: (batch_size, max_target_seq_len)
+
+                 sampling distribution of the sampled words
+                 Shape: (batch_size, max_target_seq_len, target_vocab_size)
+
+        """
+        attention_func = self.attention.on(source_encoded, source_length, source_seq_len)
+        attention_state = self.attention.get_initial_state(source_length, source_seq_len) #(batch_size, source_seq_len, dynamic_source_num_hidden)
+
+        state = self.get_initial_state(source_encoded, source_length)
+        self.rnn.reset()
+        sampled_words = []
+        sample_probs = []
+        sample_masks = []
+
+        # The decoder is allowed to generate longer sentences
+        # than the ground truths.
+        max_target_seq_len = int(target_seq_len * max_target_seq_len_ratio)
+        eos_pos_init = max_target_seq_len - 1  # initial position of EOS
+
+        # padding the label matrix
+        pad_matrix = mx.sym.tile(mx.sym.expand_dims(mx.sym.ones_like(source_length), axis=1),
+                                 reps=(1, max_target_seq_len - target_seq_len))
+        labels = mx.sym.concat(*[labels, C.PAD_ID * pad_matrix], dim=1)
+
+        split_labels = mx.sym.split(labels, num_outputs=max_target_seq_len, axis=1,
+                                    squeeze_axis=True, name='split_labels')
+
+        # The position of the EOS token in sampled sentences
+        # intialized by the last position and the positions are updated once EOS
+        # tokens generated.
+        eos_pos = mx.sym.cast(eos_pos_init * mx.sym.ones_like(source_length), dtype='int32')
+
+        # aux variable containing all 1s; not changed over time.
+        all_ones = mx.sym.cast(mx.sym.ones_like(source_length), dtype='int32')
+
+        # input words are initialized by BOS
+        input_words = C.BOS_ID * mx.sym.cast(mx.sym.ones_like(source_length), dtype='int32')
+
+        for seq_idx in range(max_target_seq_len):
+            embedded, _, _ = self.embedding.encode(input_words, None, 1)
+            state, attention_state = self._step(embedded,
+                                                state,
+                                                attention_func,
+                                                attention_state,
+                                                seq_idx)
+
+            logit = mx.sym.FullyConnected(data=state.hidden, num_hidden=self.target_vocab_size,
+                                          weight=self.cls_w, bias=self.cls_b)
+
+            prob = mx.sym.softmax(logit)
+            next_words = mx.sym.where(is_sample > 0,
+                                      mx.sym.sample_multinomial(prob),
+                                      mx.sym.cast(split_labels[seq_idx], dtype='int32'))
+
+            is_eos = (next_words == C.EOS_ID)  # check if the generated tokens are EOS or not.
+            cond = eos_pos == eos_pos_init  # check whether the EOS token's positions are updated or not
+            eos_pos = mx.sym.where(is_eos * cond,
+                                   seq_idx * all_ones,  # true: updating 'eos_pos' with the current time step
+                                   eos_pos)  # false: keeping 'eos_pos' previously generated
+
+            # if EOS tokens are generated at previous time steps, we don't care
+            # what the decoder RNN generates afterwards.
+            mask = eos_pos >= seq_idx
+
+            sampled_words.append(next_words)
+            sample_probs.append(prob)
+            sample_masks.append(mask)
+
+            input_words = next_words
+
+
+        # sampled_words: (max_target_seq_len * batch_size,)
+        sampled_words = mx.sym.concat(*sampled_words, dim=0, name='sampled_words')
+        # sample_probs: ((max_target_seq_len * batch_size), target_vocab_size)
+        sample_probs = mx.sym.concat(*sample_probs, dim=0, name='sample_probs')
+        # sample_masks: (max_target_seq_len * batch_size,)
+        sample_masks = mx.sym.concat(*sample_masks, dim=0, name='sample_masks')
+
+
+
+        # apply masking not to propagate errors unnecessarily
+        # TODO modifiy LogPolicy to take the mask matrix as an input argument.
+        sample_probs = mx.sym.broadcast_mul(sample_probs,
+                                            mx.sym.cast(mx.sym.reshape(sample_masks,
+                                                                       shape=(-1, 1)),
+                                                        dtype='float32'),
+                                            out=sample_probs)
+
+        sampled_words = mx.sym.Custom(action=sampled_words, prob=sample_probs, is_sampled=is_sample,
+                                      name='log_policy', op_type='LogPolicy',
+                                      entropy_reg=entropy_reg, scale=grad_scale)
+
+        print("Sampled_words: {}".format(len(sampled_words)))
+        print("sample_probs: {}".format(len(sample_probs)))
+        print("sample_masks: {}".format(len(sample_masks)))
+
+        # reshape the outcomes
+        sampled_words = mx.sym.reshape(sampled_words, shape=(-1,batch_size))
+        sample_probs = mx.sym.reshape(sample_probs,
+                                      shape=(max_target_seq_len, -1, self.target_vocab_size))
+
+        # batch_size * target_seq_len
+        sampled_words = mx.sym.swapaxes(mx.sym.cast(sampled_words,
+                                                    dtype='float32'), dim1=0, dim2=1)
+
+        # batch_size * target_seq_len * target_vocab_size
+        sample_probs = mx.sym.swapaxes(sample_probs, dim1=0, dim2=1)
+
+        return mx.sym.Group([sampled_words, sample_probs])
+
+
+
+    def compute_init_states(self,
+                            source_encoded: mx.sym.Symbol,
+                            source_length: mx.sym.Symbol) -> RecurrentDecoderState:
+        """
+        Computes initial states of the decoder, hidden state, and one for each RNN layer.
+        Init states for RNN layers are computed using 1 non-linear FC with the last state of the encoder as input.
+
+        :param source_encoded: Concatenated encoder states. Shape: (source_seq_len, batch_size, encoder_num_hidden).
+        :param source_length: Lengths of source sequences. Shape: (batch_size,).
+        :return: Decoder state.
+        """
+        # initial decoder hidden state
+        hidden = mx.sym.tile(data=mx.sym.expand_dims(data=source_length * 0, axis=1), reps=(1, self.num_hidden))
+        # initial states for each layer
+        layer_states = []
+        for state_idx, (_, init_num_hidden) in enumerate(self.rnn.state_shape):
+            init = mx.sym.FullyConnected(data=mx.sym.SequenceLast(data=source_encoded,
+                                                                  sequence_length=source_length,
+                                                                  use_sequence_length=True),
+                                         num_hidden=init_num_hidden,
+                                         weight=self.init_ws[state_idx],
+                                         bias=self.init_bs[state_idx],
+                                         name="%senc2decinit_%d" % (self.prefix, state_idx))
+            if self.config.layer_normalization:
+                init = self.init_norms[state_idx].normalize(init)
+            init = mx.sym.Activation(data=init, act_type="tanh",
+                                     name="%senc2dec_inittanh_%d" % (self.prefix, state_idx))
+            layer_states.append(init)
+        return RecurrentDecoderState(hidden, layer_states)
+
+    '''
+    def decode_mrt(self,
+                   source_encoded: mx.sym.Symbol,
+                   source_seq_len: int,
+                   source_length: mx.sym.Symbol,
+                   labels: mx.sym.Symbol,
+                   target_seq_len: int,
+                   max_target_seq_len_ratio: int,
+                   is_sample: mx.sym.Symbol,
                    entropy_reg: float=0.0001,
                    grad_scale: float=1.0,
                    source_lexicon: Optional[mx.sym.Symbol] = None) -> mx.sym.Symbol:
@@ -1084,12 +1254,17 @@ class RecurrentDecoder(Decoder):
 
         # get recurrent attention function conditioned on source
         attention_func = self.attention.on(source_encoded_batch_major, source_length, source_seq_len)
+
+        #attention_func = self.attention.on(source_encoded, source_length, source_seq_len)
+
         attention_state = self.attention.get_initial_state(source_length, source_seq_len)
 
         # initialize decoder states
         # hidden: (batch_size, rnn_num_hidden)
         # layer_states: List[(batch_size, state_num_hidden]
-        state = self.get_initial_state(source_encoded, source_length)
+
+        #state = self.get_initial_state(source_encoded, source_length)
+        state = self.compute_init_states(source_encoded, source_length)
 
         self.rnn.reset()
 
@@ -1179,13 +1354,13 @@ class RecurrentDecoder(Decoder):
                                       shape=(max_target_seq_len, -1, self.target_vocab_size))
 
         # batch_size * target_seq_len
-        sampled_words = mx.sym.swapaxes(mx.sym.cast(sampled_words,
-                                                    dtype='float32'), dim1=0, dim2=1)
+        # sampled_words = mx.sym.swapaxes(mx.sym.cast(sampled_words,
+        #                                             dtype='float32'), dim1=0, dim2=1)
         # batch_size * target_seq_len * target_vocab_size
-        sample_probs = mx.sym.swapaxes(sample_probs, dim1=0, dim2=1)
+        # sample_probs = mx.sym.swapaxes(sample_probs, dim1=0, dim2=1)
 
         return mx.sym.Group([sampled_words, sample_probs])
-
+    '''
 
 class ConvolutionalDecoderConfig(Config):
     """

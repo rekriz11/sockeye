@@ -568,6 +568,7 @@ def create_decoder_config(args: argparse.Namespace, encoder_num_hidden: int,
             args.rnn_enc_last_hidden_concat_to_embedding = False
 
         rnn_attention_num_hidden = args.rnn_num_hidden if args.rnn_attention_num_hidden is None else args.rnn_attention_num_hidden
+
         config_coverage = None
         if args.rnn_attention_type == C.ATT_COV:
             config_coverage = coverage.CoverageConfig(type=args.rnn_attention_coverage_type,
@@ -1072,10 +1073,15 @@ def train_mrt(args: argparse.Namespace):
                                                    args=args,
                                                    state_names=['is_sample'],
                                                    grad_req='add')
-
-
-
         '''
+        training_model = create_training_model(config=model_config,
+                                               context=context,
+                                               output_dir=output_folder,
+                                               train_iter=train_iter,
+                                               args=args)
+
+
+        
         logger.info("Minimum Risk Training")
         training_model = training.MRTrainingModel(config=model_config,
                                                   context=context,
