@@ -242,8 +242,6 @@ class TrainingModelMRT(model.SockeyeModel):
                                         compression_params=self._gradient_compression_params,
                                         fixed_param_names=fixed_param_names)
 
-
-        print("We are before module bind.....")
         self.module.bind(data_shapes=provide_data,
                          label_shapes=provide_label,
                          for_training=True,
