@@ -1005,12 +1005,14 @@ class Translator:
                  strip_unknown_words: bool = False,
                  skip_topk: bool = False,
                  beam_block_ngram: int = 0,
-                 single_hyp_max: int = 0) -> None:
+                 single_hyp_max: int = 0,
+                 beam_sibling_penalty: float = 0) -> None:
         self.context = context
         self.length_penalty = length_penalty
         self.beam_prune = beam_prune
         self.beam_search_stop = beam_search_stop
         self.beam_block_ngram = beam_block_ngram
+        self.beam_sibling_penalty = beam_sibling_penalty
         self.single_hyp_max = single_hyp_max
         self.source_vocabs = source_vocabs
         self.vocab_target = target_vocab
@@ -1633,6 +1635,20 @@ class Translator:
                 infs = np.inf * mx.nd.ones_like(scores)
                 infs = mx.nd.where(mask == 1, mask, infs)
                 scores = mx.nd.multiply(infs, scores)
+
+            if self.beam_sibling_penalty and t > 1:
+                # inf out all but the top k scores from each hypothesis
+                mask = mx.nd.topk(scores, axis=1, k=self.beam_size, ret_typ='mask', is_ascend=True)
+                infs = np.inf * mx.nd.ones_like(scores)
+                infs = mx.nd.where(mask == 1, mask, infs)
+                scores = mx.nd.multiply(infs, scores)
+                # for each hypothesis, get the top k indices, and add the appropriate penalty
+                indices = mx.nd.topk(scores, axis=1, k=self.beam_size, ret_typ='indices', is_ascend=True)
+                penalties = mx.nd.zeros_like(scores)
+                rows = mx.nd.array(np.arange(self.batch_size))
+                for rank in range(self.beam_size):
+                    penalties[rows, indices[:, rank]] = self.beam_sibling_penalty * (rank+1)
+                scores += penalties
 
             best_hyp_indices, best_word_indices, scores_accumulated = self._top(scores)
 

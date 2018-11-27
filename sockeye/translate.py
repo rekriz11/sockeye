@@ -112,7 +112,8 @@ def run_translate(args: argparse.Namespace):
                                           strip_unknown_words=args.strip_unknown_words,
                                           skip_topk=args.skip_topk,
                                           beam_block_ngram=args.beam_block_ngram,
-                                          single_hyp_max=args.single_hyp_max)
+                                          single_hyp_max=args.single_hyp_max,
+                                          beam_sibling_penalty=args.beam_sibling_penalty)
         read_and_translate(translator=translator,
                            output_handler=output_handler,
                            chunk_size=args.chunk_size,

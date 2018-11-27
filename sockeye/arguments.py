@@ -1296,6 +1296,10 @@ def add_inference_args(params):
                                default=0,
                                type=int,
                                help='Limit the number of continuations that can come from a single hypothesis.')
+    decode_params.add_argument('--beam-sibling-penalty',
+                               default=0,
+                               type=float,
+                               help='Penalize lower-ranked continuations from the same hypothesis.')
 
 
 def add_evaluate_args(params):
