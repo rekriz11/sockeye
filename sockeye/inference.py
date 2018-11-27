@@ -1645,7 +1645,7 @@ class Translator:
                 # for each hypothesis, get the top k indices, and add the appropriate penalty
                 indices = mx.nd.topk(scores, axis=1, k=self.beam_size, ret_typ='indices', is_ascend=True)
                 penalties = mx.nd.zeros_like(scores)
-                rows = mx.nd.array(np.arange(self.batch_size))
+                rows = mx.nd.array(np.arange(self.batch_size)).as_in_context(self.context)
                 for rank in range(self.beam_size):
                     penalties[rows, indices[:, rank]] = self.beam_sibling_penalty * (rank+1)
                 scores += penalties
