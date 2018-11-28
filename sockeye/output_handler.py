@@ -95,7 +95,7 @@ class StringOutputHandler(OutputHandler):
         :param t_output: Translator output.
         :param t_walltime: Total walltime for translation.
         """
-        self.stream.write("%s\n" % t_output.translation)
+        self.stream.write("%s\n" % t_output.translation.encode('ascii', 'ignore').decode())
         self.stream.flush()
 
 

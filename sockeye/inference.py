@@ -1109,7 +1109,7 @@ class Translator:
                 self.global_avoid_trie.add_phrase(phrase_ids)
 
         self._named_entities_tgt = dict()
-        named_entity_pattern = re.compile(r'(PERSON|LOCATION|ORGANIZATION)@\d')
+        named_entity_pattern = re.compile(r'(PERSON|LOCATION|ORGANIZATION|person|norp|fac|org|gpe|loc|product|event|work_of_art|law|language|date|time|percent|money|quantity|ordinal|cardinal)@\d')
         for token, token_id in self.vocab_target.items():
             if re.fullmatch(named_entity_pattern, token):
                 self._named_entities_tgt[token] = token_id
