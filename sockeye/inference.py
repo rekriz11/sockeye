@@ -1123,7 +1123,7 @@ class Translator:
                 self.global_avoid_trie.add_phrase(phrase_ids)
 
         self._named_entities_tgt = dict()
-        named_entity_pattern = re.compile(r'(PERSON|LOCATION|ORGANIZATION)@\d')
+        named_entity_pattern = re.compile(r'(PERSON|LOCATION|ORGANIZATION|person|norp|fac|org|gpe|loc|product|event|work_of_art|law|language|date|time|percent|money|quantity|ordinal|cardinal)@\d')
         for token, token_id in self.vocab_target.items():
             if re.fullmatch(named_entity_pattern, token):
                 self._named_entities_tgt[token] = token_id
@@ -1660,7 +1660,7 @@ class Translator:
                 # for each hypothesis, get the top k indices, and add the appropriate penalty
                 indices = mx.nd.topk(scores, axis=1, k=self.beam_size, ret_typ='indices', is_ascend=True)
                 penalties = mx.nd.zeros_like(scores)
-                rows = mx.nd.array(np.arange(self.batch_size))
+                rows = mx.nd.array(np.arange(self.batch_size)).as_in_context(self.context)
                 for rank in range(self.beam_size):
                     penalties[rows, indices[:, rank]] = self.beam_sibling_penalty * (rank+1)
                 scores += penalties
