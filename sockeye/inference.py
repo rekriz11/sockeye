@@ -1006,8 +1006,13 @@ class Translator:
                  skip_topk: bool = False,
                  beam_block_ngram: int = 0,
                  single_hyp_max: int = 0,
-                 beam_sibling_penalty: float = 0) -> None:
+                 beam_sibling_penalty: float = 0,
+                 stochastic_search: int = 0,
+                 stochastic_search_size: int = 10) -> None:
         self.context = context
+        self.stochastic_search_size = stochastic_search_size
+        self.stochastic_search = stochastic_search
+        #self.stochastic_search = 1
         self.length_penalty = length_penalty
         self.beam_prune = beam_prune
         self.beam_search_stop = beam_search_stop
@@ -1039,6 +1044,7 @@ class Translator:
             utils.check_condition(len(self.models) == 1 and self.beam_size == 1, "Skipping softmax cannot be enabled for several models, or a beam size > 1.")
 
         self.skip_topk = skip_topk
+        self.skip_topk = True
         # after models are loaded we ensured that they agree on max_input_length, max_output_length and batch size
         self._max_input_length = self.models[0].max_input_length
         if bucket_source_width > 0:
@@ -1072,7 +1078,14 @@ class Translator:
                                     offset=self.offset,
                                     use_mxnet_topk=True)  # type: Callable
         else:
-            if self.skip_topk:
+            if self.stochastic_search == 1:
+                self._top = TopKRandom(k=self.beam_size,
+                                       n=self.stochastic_search_size,
+                                       batch_size=self.batch_size,
+                                       vocab_size=len(self.vocab_target))  # type: mx.gluon.HybridBlock
+                self._top.initialize(ctx=self.context)
+                self._top.hybridize(static_alloc=True, static_shape=True)
+            elif self.skip_topk:
                 self._top = Top1(k=self.beam_size,
                                  batch_size=self.batch_size)  # type: mx.gluon.HybridBlock
                 self._top.initialize(ctx=self.context)
@@ -1083,6 +1096,7 @@ class Translator:
                                  vocab_size=len(self.vocab_target))  # type: mx.gluon.HybridBlock
                 self._top.initialize(ctx=self.context)
                 self._top.hybridize(static_alloc=True, static_shape=True)
+
 
         self._sort_by_index = SortByIndex()
         self._sort_by_index.initialize(ctx=self.context)
@@ -1421,6 +1435,7 @@ class Translator:
                 # Otherwise decoder outputs are already target vocab probs,
                 # or logits if beam size is 1
                 probs = decoder_outputs
+
             model_probs.append(probs)
             model_attention_probs.append(attention_probs)
             model_states.append(state)
@@ -1953,6 +1968,7 @@ class TopK(mx.gluon.HybridBlock):
         :param offset: Array to add to the hypothesis indices for offsetting in batch decoding.
         :return: The row indices, column indices and values of the k smallest items in matrix.
         """
+        logger.info("We are in top K")
         folded_scores = F.reshape(scores, shape=(self.batch_size, self.k * self.vocab_size))
         values, indices = F.topk(folded_scores, axis=1, k=self.k, ret_typ='both', is_ascend=True)
         indices = F.reshape(F.cast(indices, 'int32'), shape=(-1,))
@@ -1960,6 +1976,86 @@ class TopK(mx.gluon.HybridBlock):
         best_hyp_indices, best_word_indices = F.split(unraveled, axis=0, num_outputs=2, squeeze_axis=True)
         best_hyp_indices = best_hyp_indices + offset
         values = F.reshape(values, shape=(-1, 1))
+        return best_hyp_indices, best_word_indices, values
+
+class TopKRandom(mx.gluon.HybridBlock):
+    """
+    A HybridBlock for a statically-shaped batch-wise topk operation.
+    """
+
+    def __init__(self, k: int, n: int, batch_size: int, vocab_size: int) -> None:
+        """
+        :param k: The number of smallest scores to return.
+        :param batch_size: Number of sentences being decoded at once.
+        :param vocab_size: Vocabulary size.
+        """
+        super().__init__()
+        self.k = k
+        self.n = n
+        self.batch_size = batch_size
+        self.vocab_size = vocab_size
+        with self.name_scope():
+            offset = mx.nd.repeat(mx.nd.arange(0, batch_size * k, k, dtype='int32'), k)
+            self.offset = self.params.get_constant(name='offset', value=offset)
+
+    def hybrid_forward(self, F, scores, offset):
+        """
+        Get the lowest k elements per sentence from a `scores` matrix.
+
+        :param scores: Vocabulary scores for the next beam step. (batch_size * beam_size, target_vocabulary_size)
+        :param offset: Array to add to the hypothesis indices for offsetting in batch decoding.
+        :return: The row indices, column indices and values of the k smallest items in matrix.
+        """
+        neg_scores = -scores
+
+
+        '''Approach 2: Convert negative of scores to probability distribution'''
+        #############################
+        logits = neg_scores
+        top_n_logits, top_n_logits_idxs = mx.sym.topk(logits, axis=1, k=self.n, ret_typ='both', is_ascend=False)
+        sum_logits = mx.sym.nansum(top_n_logits, axis=1)
+        sum_logits = mx.sym.reshape(sum_logits, shape=(-1, 1))
+        sum_logits = mx.sym.repeat(sum_logits, repeats=self.n, axis=1)
+        derived_probs = mx.sym.elemwise_div(top_n_logits, sum_logits)
+        selected_index = mx.sym.sample_multinomial(derived_probs, shape=(1))
+        best_word_indices = F.cast(F.pick(top_n_logits_idxs, selected_index, 1, mode='wrap'), dtype='int32')
+        #############################
+
+
+        '''Approach 1'''
+        '''TO FIX: logits become 'inf' as neg score value increases'''
+        '''
+        logits = mx.sym.exp(neg_scores)
+        #max_logit_idx = F.argmax(logits, axis=1)
+        #max_logit = F.pick(logits, max_logit_idx, axis=1)
+
+        sum_logits = mx.sym.nansum(logits, axis=1)
+        sum_logits = mx.sym.reshape(sum_logits, shape=(-1, 1))
+        sum_logits = mx.sym.repeat(sum_logits, repeats=self.vocab_size, axis=1)
+
+        derived_probs = mx.sym.elemwise_div(logits, sum_logits)
+        #top_dps = F.topk(derived_probs, axis=1, k=self.n, ret_typ='value', is_ascend=False)
+
+        #masking to keep top n values
+        mask = F.topk(derived_probs, axis=1, k=self.n, ret_typ='mask', is_ascend=False)
+        dist = derived_probs[0]*mask
+        dist = mx.sym.reshape(dist, shape=(1,-1))
+
+        top_n_values, top_n_indices = mx.sym.topk(dist, axis=1, k=self.n, ret_typ='both', is_ascend=False)
+        #scrs = mx.sym.topk(scores, axis=1, k=self.n, ret_typ='value', is_ascend=True)
+        #lgts = mx.sym.topk(logits, axis=1, k=self.n, ret_typ='value', is_ascend=False)
+
+        #sample probabilistically
+        selected_index = mx.sym.sample_multinomial(top_n_values, shape=(1))
+        best_word_indices = F.cast(F.pick(top_n_indices, selected_index, 1, mode='wrap'), dtype='int32')
+        '''
+
+
+        values = F.pick(scores, best_word_indices, axis=1)
+        values = F.reshape(values, shape=(-1, 1))
+
+        # for top1, the best hyp indices are equal to the plain offset
+        best_hyp_indices = offset
         return best_hyp_indices, best_word_indices, values
 
 
@@ -1992,6 +2088,7 @@ class Top1(mx.gluon.HybridBlock):
         :param offset: Array to add to the hypothesis indices for offsetting in batch decoding.
         :return: The row indices, column indices and values of the smallest items in matrix.
         """
+        logger.info("We are in top 1")
         best_word_indices = F.cast(F.argmin(scores, axis=1), dtype='int32')
         values = F.pick(scores, best_word_indices, axis=1)
         values = F.reshape(values, shape=(-1, 1))

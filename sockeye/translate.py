@@ -96,6 +96,7 @@ def run_translate(args: argparse.Namespace):
             restrict_lexicon = TopKLexicon(source_vocabs[0], target_vocab)
             restrict_lexicon.load(args.restrict_lexicon, k=args.restrict_lexicon_topk)
         store_beam = args.output_type == C.OUTPUT_HANDLER_BEAM_STORE
+
         translator = inference.Translator(context=context,
                                           ensemble_mode=args.ensemble_mode,
                                           bucket_source_width=args.bucket_width,
@@ -113,13 +114,16 @@ def run_translate(args: argparse.Namespace):
                                           skip_topk=args.skip_topk,
                                           beam_block_ngram=args.beam_block_ngram,
                                           single_hyp_max=args.single_hyp_max,
-                                          beam_sibling_penalty=args.beam_sibling_penalty)
+                                          beam_sibling_penalty=args.beam_sibling_penalty,
+                                          stochastic_search=args.stochastic_search,
+                                          stochastic_search_size=args.stochastic_search_size)
         read_and_translate(translator=translator,
                            output_handler=output_handler,
                            chunk_size=args.chunk_size,
                            input_file=args.input,
                            input_factors=args.input_factors,
-                           input_is_json=args.json_input)
+                           input_is_json=args.json_input,
+                           num_translations=args.num_translations)
 
 
 def make_inputs(input_file: Optional[str],
@@ -168,7 +172,8 @@ def read_and_translate(translator: inference.Translator,
                        chunk_size: Optional[int],
                        input_file: Optional[str] = None,
                        input_factors: Optional[List[str]] = None,
-                       input_is_json: bool = False) -> None:
+                       input_is_json: bool = False,
+                       num_translations: int = 3) -> None:
     """
     Reads from either a file or stdin and translates each line, calling the output_handler with the result.
 
@@ -179,6 +184,7 @@ def read_and_translate(translator: inference.Translator,
     :param input_factors: Optional list of paths to files that contain source factors.
     :param input_is_json: Whether the input is in json format.
     """
+    #num_translations = 3
     batch_size = translator.batch_size
     if chunk_size is None:
         if translator.batch_size == 1:
@@ -197,9 +203,10 @@ def read_and_translate(translator: inference.Translator,
 
     total_time, total_lines = 0.0, 0
     for chunk in grouper(make_inputs(input_file, translator, input_is_json, input_factors), size=chunk_size):
-        chunk_time = translate(output_handler, chunk, translator)
+        chunk_time = translate(output_handler, chunk, translator,num_translations)
         total_lines += len(chunk)
         total_time += chunk_time
+        break
 
     if total_lines != 0:
         logger.info("Processed %d lines in %d batches. Total time: %.4f, sec/sent: %.4f, sent/sec: %.4f",
@@ -211,7 +218,8 @@ def read_and_translate(translator: inference.Translator,
 
 def translate(output_handler: OutputHandler,
               trans_inputs: List[inference.TranslatorInput],
-              translator: inference.Translator) -> float:
+              translator: inference.Translator,
+              num_translations: int = 1) -> float:
     """
     Translates each line from source_data, calling output handler after translating a batch.
 
@@ -221,11 +229,29 @@ def translate(output_handler: OutputHandler,
     :return: Total time taken.
     """
     tic = time.time()
-    trans_outputs = translator.translate(trans_inputs)
-    total_time = time.time() - tic
-    batch_time = total_time / len(trans_inputs)
-    for trans_input, trans_output in zip(trans_inputs, trans_outputs):
-        output_handler.handle(trans_input, trans_output, batch_time)
+
+    if num_translations > 1:
+        trans_outputs_list = []
+        for i in range(num_translations):
+            trans_outputs = translator.translate(trans_inputs)
+            trans_outputs_list.append(trans_outputs)
+
+        total_time = time.time() - tic
+        batch_time = total_time / len(trans_inputs)
+        cnt = 0
+        for trans_input in trans_inputs:
+            for trans_outputs in trans_outputs_list:
+                output_handler.handle(trans_input, trans_outputs[cnt], batch_time)
+            output_handler.handle(trans_input, None, batch_time)
+            cnt = cnt + 1
+    else:
+        trans_outputs = translator.translate(trans_inputs)
+        total_time = time.time() - tic
+        batch_time = total_time / len(trans_inputs)
+        for trans_input, trans_output in zip(trans_inputs, trans_outputs):
+            output_handler.handle(trans_input, trans_output, batch_time)
+        output_handler.handle(trans_input, None, batch_time)
+
     return total_time
 
 

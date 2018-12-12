@@ -95,7 +95,10 @@ class StringOutputHandler(OutputHandler):
         :param t_output: Translator output.
         :param t_walltime: Total walltime for translation.
         """
-        self.stream.write("%s\n" % t_output.translation)
+        if t_output is None:
+            self.stream.write("\n")
+        else:
+            self.stream.write("%s\t" % t_output.translation)
         self.stream.flush()
 
 

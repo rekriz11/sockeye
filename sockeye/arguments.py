@@ -1300,6 +1300,18 @@ def add_inference_args(params):
                                default=0,
                                type=float,
                                help='Penalize lower-ranked continuations from the same hypothesis.')
+    decode_params.add_argument('--stochastic-search',
+                               default=0,
+                               type=int,
+                               help='Enable stochastic search.')
+    decode_params.add_argument('--stochastic-search-size',
+                               default=10,
+                               type=int,
+                               help='Limit the number of top words to randomly choose one at each step during stochastic search.'),
+    decode_params.add_argument('--num-translations',
+                               default=1,
+                               type=int,
+                               help='Limit the number of translations using during stochastic search.')
 
 
 def add_evaluate_args(params):
